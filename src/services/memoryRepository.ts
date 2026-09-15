@@ -150,7 +150,7 @@ export class MemoryRepository implements CommandCenterRepository {
         ...this.snapshot.contactActivity,
       ],
       contacts: this.snapshot.contacts.map((item) =>
-        item.id === contactId ? { ...item, notes: body, updatedAt: now } : item,
+        item.id === contactId ? { ...item, updatedAt: now } : item,
       ),
     };
     const contact = this.snapshot.contacts.find((item) => item.id === contactId);

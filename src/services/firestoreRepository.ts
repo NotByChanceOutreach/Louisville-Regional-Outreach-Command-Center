@@ -289,7 +289,7 @@ export class FirestoreRepository implements CommandCenterRepository {
         createdBy: this.actor(),
       }),
     );
-    batch.update(doc(this.db, 'contacts', contactId), { notes: body, updatedAt: now });
+    batch.update(doc(this.db, 'contacts', contactId), { updatedAt: now });
     await batch.commit();
     await this.pushFeed('note', `Note on ${contact?.organization ?? 'contact'}: ${body}`, 'contact', contactId);
   }
