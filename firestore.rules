@@ -1,0 +1,78 @@
+rules_version = '2';
+
+// Rick's Command Center — private admin app.
+// Deny by default. Any signed-in Google account is NOT enough.
+// Access requires an explicit allowlisted email AND an active admins/{uid} role.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    function emailId() {
+      return request.auth.token.email.lower();
+    }
+
+    function isAllowlistedEmail() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/adminEmails/$(emailId()))
+        && get(/databases/$(database)/documents/adminEmails/$(emailId())).data.active == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true;
+    }
+
+    match /adminEmails/{email} {
+      allow get: if isSignedIn() && email == emailId();
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /admins/{uid} {
+      allow get: if isSignedIn() && request.auth.uid == uid;
+      allow list: if isAdmin();
+      allow create: if isAllowlistedEmail()
+                    && request.auth.uid == uid
+                    && request.resource.data.email.lower() == request.auth.token.email.lower()
+                    && request.resource.data.role == 'admin'
+                    && request.resource.data.active == true;
+      allow update, delete: if isAdmin();
+    }
+
+    match /tasks/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /contacts/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /contactActivity/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /followUps/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /boardTasks/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /settings/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /activity/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
