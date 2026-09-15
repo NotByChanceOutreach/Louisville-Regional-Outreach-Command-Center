@@ -15,7 +15,14 @@ The four jobs on the home screen are:
 
 This is not a generic CRM. It is a phone-first call-and-follow-up tool.
 
-Live hosting target: a new Firebase Hosting site under the Louisville Regional Outreach Command Center project. Working repo: [NotByChanceOutreach/Louisville-Regional-Outreach-Command-Center](https://github.com/NotByChanceOutreach/Louisville-Regional-Outreach-Command-Center).
+Production:
+
+- Firebase project: `notbychance-command-center` (display name **Rick's Command Center**)
+- URL: https://notbychance-command-center.web.app
+- Alias: https://notbychance-command-center.firebaseapp.com
+- Admin: `nbc@notbychanceoutreach.com`
+
+Working repo: [NotByChanceOutreach/Louisville-Regional-Outreach-Command-Center](https://github.com/NotByChanceOutreach/Louisville-Regional-Outreach-Command-Center).
 
 Related tools:
 
@@ -51,14 +58,14 @@ Without Firebase config the app shows a login page explaining that `.env.local` 
 4. Create a **Cloud Firestore** database (production mode — these rules deny public access).
 5. Enable **Hosting**.
 6. Copy the web app config into `.env.local` (never commit it).
-7. Replace `YOUR_FIREBASE_PROJECT_ID` in `.firebaserc`.
+7. `.firebaserc` is already set to `notbychance-command-center`.
 
 ### First admin (required)
 
 Any Google account is **not** an admin. Access is an explicit allowlist.
 
 ```bash
-npx tsx scripts/grant-admin.ts --project YOUR_FIREBASE_PROJECT_ID --email YOUR_GOOGLE_EMAIL
+npx tsx scripts/grant-admin.ts --project notbychance-command-center --email nbc@notbychanceoutreach.com
 ```
 
 This writes `adminEmails/{email}`. Sign in once; the app then creates `admins/{uid}`.
@@ -85,7 +92,7 @@ The first successful admin sign-in seeds:
 Re-run anytime with:
 
 ```bash
-npx tsx scripts/seed.ts --project YOUR_FIREBASE_PROJECT_ID
+npx tsx scripts/seed.ts --project notbychance-command-center
 ```
 
 Document IDs are stable, so this is idempotent.
@@ -95,11 +102,11 @@ Document IDs are stable, so this is idempotent.
 ```bash
 npm run build
 firebase login
-firebase use YOUR_FIREBASE_PROJECT_ID
+firebase use notbychance-command-center
 firebase deploy --only firestore:rules,firestore:indexes,hosting
 ```
 
-Exact Hosting URL after deploy: `https://YOUR_FIREBASE_PROJECT_ID.web.app`
+Exact Hosting URL: `https://notbychance-command-center.web.app`
 
 Optional named site (Firebase site IDs are max 30 characters):
 

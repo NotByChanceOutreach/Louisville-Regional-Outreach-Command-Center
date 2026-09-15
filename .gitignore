@@ -19,6 +19,8 @@ ui-debug.log
 serviceAccount*.json
 *-firebase-adminsdk-*.json
 *.pem
+tmp-*
+tmp-screens/
 
 # Editor directories and files
 .vscode/*
