@@ -8,8 +8,8 @@ import { callQueue } from '../lib/nextContact.ts';
 export function CallsPage() {
   const { snapshot } = useCommandCenter();
   const queue = callQueue(snapshot.contacts);
-  const overdue = snapshot.contacts.filter((contact) => contact.status === 'Follow Up' && isOverdue(contact.nextFollowUpAt));
-  const dueToday = snapshot.contacts.filter((contact) => contact.status === 'Follow Up' && isDueToday(contact.nextFollowUpAt));
+  const overdue = snapshot.contacts.filter((contact) => !contact.archived && contact.status === 'Follow Up' && isOverdue(contact.nextFollowUpAt));
+  const dueToday = snapshot.contacts.filter((contact) => !contact.archived && contact.status === 'Follow Up' && isDueToday(contact.nextFollowUpAt));
 
   return (
     <div className="space-y-4">

@@ -123,6 +123,26 @@ Then add `"site": "louisville-command-center"` under `hosting` in `firebase.json
 
 The app shell is cached. Firestore remains the source of truth; do not enter notes while driving.
 
+## Phase 2 (operational command center)
+
+Seed data is a starting point, not a lock. Every organization can be edited, archived, verified, and improved while you work.
+
+- Full resource/contact editing, labeled phones, multiple people per organization
+- Archive (remove from active list) with restore; permanent delete is separate
+- Verification checklist + aging (current / aging / stale / never verified)
+- Call outcomes, follow-up engine, Today view, Next Best Action
+- Quick capture (`+`), global search, duplicate warnings, merge, data quality
+- CSV import (preview first) and export
+- Settings for categories, archive reasons, aging thresholds, and follow-up intervals
+
+After deploy, existing Firestore documents are hydrated in the client. Persist the new fields with:
+
+```bash
+npx tsx scripts/migrate-phase2.ts --project notbychance-command-center
+```
+
+This is idempotent and does not delete records.
+
 ## Data model
 
 | Collection | Purpose |
@@ -130,11 +150,11 @@ The app shell is cached. Firestore remains the source of truth; do not enter not
 | `adminEmails/{email}` | Explicit Google email allowlist |
 | `admins/{uid}` | Active admin role for a signed-in user |
 | `tasks` | Priorities and other work |
-| `contacts` | Combined directory (underwear, board, resources, donors, partners) |
+| `contacts` | Organizations/resources with nested `people` and `methods`, archive + verification |
 | `contactActivity` | Append-only contact log |
-| `followUps` | Dated follow-ups |
+| `followUps` | Dated / recurring follow-ups |
 | `boardTasks` | Board meeting checklist |
-| `settings/app` | Seed flag, resource counts, verifier URL |
+| `settings/app` | Seed flag, URLs, categories, archive reasons, aging thresholds |
 | `activity` | Chronological feed |
 
 ## Imported underwear contacts
@@ -172,6 +192,7 @@ npx firebase emulators:exec --only firestore "npm run test:rules"
 | `npm run test:rules` | Security rules tests (needs emulator) |
 | `npm run grant-admin` | Allowlist an email |
 | `npm run seed` | Write seed documents |
+| `npm run migrate:phase2` | Idempotent Phase 2 contact/settings hydration |
 
 ## Quality checks before calling it done
 

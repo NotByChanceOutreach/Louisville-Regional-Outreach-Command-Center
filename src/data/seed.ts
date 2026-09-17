@@ -4,6 +4,8 @@ import { underwearSeedContacts } from './underwearContacts.ts';
 import {
   DEFAULT_NAVIGATOR_URL,
   DEFAULT_RESOURCE_VERIFIER_URL,
+  DEFAULT_SETTINGS,
+  SCHEMA_VERSION,
   type CommandCenterSnapshot,
 } from '../types/models.ts';
 
@@ -24,17 +26,14 @@ export function buildSeedSnapshot(now: Date = new Date()): CommandCenterSnapshot
         entityId: null,
         createdAt: nowIso,
         createdBy: 'system',
+        createdByUid: null,
+        details: null,
       },
     ],
     settings: {
+      ...DEFAULT_SETTINGS,
       seededAt: nowIso,
-      resourceProgress: {
-        remaining: 0,
-        contacted: 0,
-        verified: 0,
-        needsFollowUp: 0,
-        unableToReach: 0,
-      },
+      schemaVersion: SCHEMA_VERSION,
       resourceVerifierUrl: DEFAULT_RESOURCE_VERIFIER_URL,
       navigatorUrl: DEFAULT_NAVIGATOR_URL,
     },

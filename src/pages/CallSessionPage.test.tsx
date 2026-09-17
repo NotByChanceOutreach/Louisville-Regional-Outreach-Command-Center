@@ -35,9 +35,9 @@ describe('CallSessionPage', () => {
     const call = screen.getAllByRole('link', { name: /call/i })[0];
     expect(call.getAttribute('href')?.startsWith('tel:')).toBe(true);
 
-    await ui.click(screen.getByRole('button', { name: /left message/i }));
+    await ui.click(screen.getByRole('button', { name: /left voicemail/i }));
     await waitFor(() => {
-      expect(screen.getByText(/left message/i)).toBeInTheDocument();
+      expect(screen.getByText(/left voicemail/i)).toBeInTheDocument();
     });
     expect(repo.current().contacts.find((item) => item.id === contact.id)?.status).toBe('Left Message');
     expect(screen.getByRole('button', { name: /next contact/i })).toBeInTheDocument();

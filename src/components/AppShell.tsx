@@ -1,5 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { DrivingNotice } from './DrivingNotice.tsx';
+import { GlobalSearch } from './GlobalSearch.tsx';
+import { QuickCapture } from './QuickCapture.tsx';
 import { signOutUser } from '../services/auth.ts';
 import { useCommandCenter } from '../hooks/useCommandCenter.ts';
 
@@ -19,6 +21,7 @@ const desktopNav = [
   { to: '/resources', label: 'Resources' },
   { to: '/underwear', label: 'Underwear' },
   { to: '/board', label: 'Board' },
+  { to: '/quality', label: 'Quality' },
   { to: '/activity', label: 'Activity' },
   { to: '/settings', label: 'Settings' },
 ];
@@ -39,11 +42,12 @@ export function AppShell() {
               <h1 className="text-lg font-bold leading-tight tracking-tight">Rick&apos;s Command Center</h1>
             </div>
           </div>
-          <div className="hidden items-center gap-2 md:flex">
-            <span className="text-xs text-slate-400">{user.displayName}</span>
+          <div className="flex items-center gap-2">
+            <GlobalSearch />
+            <span className="hidden text-xs text-slate-400 md:inline">{user.displayName}</span>
             <button
               type="button"
-              className="min-h-11 rounded-md bg-slate-800 px-3 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+              className="hidden min-h-11 rounded-md bg-slate-800 px-3 text-xs font-semibold text-slate-200 hover:bg-slate-700 md:inline"
               onClick={() => void signOutUser()}
             >
               Sign out
@@ -75,6 +79,7 @@ export function AppShell() {
           <DrivingNotice />
         </div>
         <Outlet />
+        <QuickCapture />
       </main>
 
       <nav

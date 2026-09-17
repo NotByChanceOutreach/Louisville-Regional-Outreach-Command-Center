@@ -5,6 +5,8 @@ const links = [
   { to: '/resources', label: 'Resources', icon: 'fa-clipboard-check' },
   { to: '/underwear', label: 'Underwear outreach', icon: 'fa-shirt' },
   { to: '/board', label: 'Board meeting', icon: 'fa-people-group' },
+  { to: '/quality', label: 'Data quality', icon: 'fa-heart-pulse' },
+  { to: '/import', label: 'Import / Export', icon: 'fa-file-csv' },
   { to: '/activity', label: 'Activity', icon: 'fa-clock-rotate-left' },
   { to: '/settings', label: 'Settings', icon: 'fa-gear' },
 ];

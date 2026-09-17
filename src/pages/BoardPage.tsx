@@ -53,7 +53,7 @@ export function BoardPage() {
       </div>
       <Modal open={open} title="Add board member" onClose={() => setOpen(false)}>
         <ContactForm
-          initial={{ category: 'Board', organization: 'Not By Chance Outreach', source: 'Added in Command Center', verificationStatus: 'needs_research' }}
+          initial={{ category: 'Board', organization: 'Not By Chance Outreach', source: 'Added in Command Center', verificationStatus: 'Research Needed' }}
           submitLabel="Save member"
           onSubmit={async (value) => {
             await repo.upsertContact({ ...value, category: 'Board', organization: value.organization || 'Not By Chance Outreach' });

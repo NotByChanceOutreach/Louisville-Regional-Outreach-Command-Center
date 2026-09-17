@@ -1,32 +1,27 @@
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
+import { BulkBar } from '../components/BulkBar.tsx';
 import { ContactCard } from '../components/ContactCard.tsx';
 import { ContactForm } from '../components/ContactForm.tsx';
 import { Modal } from '../components/Modal.tsx';
-import { Card, Field, PrimaryButton, TextInput } from '../components/Ui.tsx';
+import { Card, PrimaryButton } from '../components/Ui.tsx';
 import { useCommandCenter } from '../hooks/useCommandCenter.ts';
+import { navigatorCounts } from '../lib/counters.ts';
+import { isActiveContact } from '../lib/contactModel.ts';
 
 export function ResourcesPage() {
   const { snapshot, repo } = useCommandCenter();
-  const resources = snapshot.contacts.filter((contact) => contact.category === 'Resources');
+  const resources = snapshot.contacts.filter((contact) => contact.category === 'Resources' && isActiveContact(contact));
+  const archived = snapshot.contacts.filter((contact) => contact.category === 'Resources' && contact.archived);
   const [open, setOpen] = useState(false);
-  const progress = snapshot.settings.resourceProgress;
-
-  async function saveCounts(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await repo.updateResourceProgress({
-      remaining: Number(form.get('remaining') || 0),
-      contacted: Number(form.get('contacted') || 0),
-      verified: Number(form.get('verified') || 0),
-      needsFollowUp: Number(form.get('needsFollowUp') || 0),
-      unableToReach: Number(form.get('unableToReach') || 0),
-    });
-  }
+  const [selected, setSelected] = useState<string[]>([]);
+  const counts = navigatorCounts(snapshot.contacts, new Date(), snapshot.settings);
 
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-bold text-slate-900">Resource verification</h2>
-      <p className="text-sm text-slate-600">Contact remaining Next Chance Navigator resources. Counts are yours to keep current.</p>
+      <p className="text-sm text-slate-600">
+        Counts are calculated from this database. Seed data is a starting point — edit, verify, and archive as you work.
+      </p>
       <a
         href={snapshot.settings.resourceVerifierUrl}
         target="_blank"
@@ -35,18 +30,17 @@ export function ResourcesPage() {
       >
         Open resource verifier
       </a>
-      <Card>
-        <form method="post" onSubmit={(event) => void saveCounts(event)} className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <CountField id="remaining" label="Remaining" defaultValue={progress.remaining} />
-          <CountField id="contacted" label="Contacted" defaultValue={progress.contacted} />
-          <CountField id="verified" label="Verified" defaultValue={progress.verified} />
-          <CountField id="needsFollowUp" label="Needs follow-up" defaultValue={progress.needsFollowUp} />
-          <CountField id="unableToReach" label="Unable to reach" defaultValue={progress.unableToReach} />
-          <div className="col-span-2 md:col-span-5">
-            <PrimaryButton type="submit">Save counts</PrimaryButton>
-          </div>
-        </form>
-      </Card>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Stat n={counts.total} label="Total resources" />
+        <Stat n={counts.unverified} label="Unverified" />
+        <Stat n={counts.verified} label="Verified" />
+        <Stat n={counts.needsResearch} label="Needs research" />
+        <Stat n={counts.needsCorrection} label="Needs correction" />
+        <Stat n={counts.unableToReach} label="Unable to reach" />
+        <Stat n={counts.archived} label="Archived" />
+        <Stat n={counts.stale} label="Stale" />
+      </div>
+      <BulkBar selected={selected} contacts={resources} repo={repo} categories={snapshot.settings.categories} onClear={() => setSelected([])} />
       <div className="flex items-center justify-between">
         <h3 className="font-bold text-slate-900">Resource contacts</h3>
         <PrimaryButton className="w-auto px-4" onClick={() => setOpen(true)}>
@@ -54,17 +48,29 @@ export function ResourcesPage() {
         </PrimaryButton>
       </div>
       {resources.length === 0 ? (
-        <p className="text-sm text-slate-500">No resource contacts stored here yet. The verifier app holds the live queue.</p>
+        <p className="text-sm text-slate-500">No active resource contacts yet. Add one here or import a CSV.</p>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {resources.map((contact) => (
-            <ContactCard key={contact.id} contact={contact} />
+            <ContactCard
+              key={contact.id}
+              contact={contact}
+              selectable
+              selected={selected.includes(contact.id)}
+              onToggle={(id) => setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))}
+            />
           ))}
         </div>
       )}
+      {archived.length > 0 ? (
+        <Card>
+          <p className="text-sm font-semibold">{archived.length} archived resources — open Contacts → Archived to restore.</p>
+        </Card>
+      ) : null}
       <Modal open={open} title="Add resource contact" onClose={() => setOpen(false)}>
         <ContactForm
-          initial={{ category: 'Resources', source: 'Added in Command Center', verificationStatus: 'needs_research' }}
+          categories={snapshot.settings.categories}
+          initial={{ category: 'Resources', source: 'Added in Command Center', verificationStatus: 'Unverified' }}
           submitLabel="Save resource"
           onSubmit={async (value) => {
             await repo.upsertContact({ ...value, category: 'Resources' });
@@ -76,10 +82,11 @@ export function ResourcesPage() {
   );
 }
 
-function CountField({ id, label, defaultValue }: { id: string; label: string; defaultValue: number }) {
+function Stat({ n, label }: { n: number; label: string }) {
   return (
-    <Field label={label} htmlFor={id}>
-      <TextInput id={id} name={id} type="number" inputMode="numeric" min={0} defaultValue={defaultValue} />
-    </Field>
+    <div className="rounded-lg border border-slate-200 bg-white p-3 text-center">
+      <p className="text-2xl font-black text-indigo-600">{n}</p>
+      <p className="text-[10px] font-semibold uppercase text-slate-500">{label}</p>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -14,31 +15,67 @@ import { applyCallOutcome, emptySnapshot, reorder } from '../lib/commandActions.
 import { newId } from '../lib/dates.ts';
 import { buildSeedSnapshot } from '../data/seed.ts';
 import { getDb, normalizeEmail } from './firebase.ts';
+import {
+  addMethodToContact,
+  addPersonToContact,
+  archiveContactRecord,
+  createBlankContact,
+  hydrateContact,
+  markMethodInvalid,
+  restoreContactRecord,
+  withPrimaryPerson,
+  withPrimaryPhone,
+  type MethodDraft,
+  type PersonDraft,
+} from '../lib/contactModel.ts';
+import { describeArchive, describeContactEdits, describeRestore, describeVerify } from '../lib/activityCopy.ts';
+import { mergeContacts, type FieldChoices } from '../lib/mergeContacts.ts';
+import { applyVerification } from '../lib/verification.ts';
+import { nextRecurrence } from '../lib/followUpSchedule.ts';
 import type {
   AdminCheck,
+  BulkAction,
   CallOutcomeWrite,
   CommandCenterRepository,
   ContactDraft,
   NewTaskInput,
 } from './repository.ts';
+import type { ImportPreviewRow } from '../lib/csv.ts';
 import type {
+  ActivityDetails,
   ActivityEvent,
   AppSettings,
+  ArchiveReason,
   AuthUser,
   BoardTask,
   CommandCenterSnapshot,
   Contact,
   ContactActivity,
-  ContactCategory,
+  ContactActivityType,
+  ContactMethod,
   ContactStatus,
   FollowUp,
+  FollowUpKind,
+  OrgPerson,
   PinKey,
   ResourceProgress,
   Task,
   TaskCategory,
   TaskPriority,
   TaskStatus,
+  VerificationChecks,
+  VerificationHistoryEntry,
   VerificationStatus,
+} from '../types/models.ts';
+import {
+  ARCHIVE_REASONS,
+  CONTACT_CATEGORIES,
+  DEFAULT_FOLLOW_UP_INTERVALS,
+  DEFAULT_NAVIGATOR_URL,
+  DEFAULT_RESOURCE_VERIFIER_URL,
+  EMPTY_ATTEMPTS,
+  EMPTY_VERIFICATION_CHECKS,
+  SCHEMA_VERSION,
 } from '../types/models.ts';
 
 function asIso(value: unknown): string {
@@ -198,7 +235,10 @@ export class FirestoreRepository implements CommandCenterRepository {
   async seedIfNeeded(): Promise<void> {
     const settingsRef = doc(this.db, 'settings', 'app');
     const existing = await getDoc(settingsRef);
-    if (existing.exists() && existing.data().seededAt) return;
+    if (existing.exists() && existing.data().seededAt) {
+      await this.migrateIfNeeded();
+      return;
+    }
 
     const seed = buildSeedSnapshot();
     const batch = writeBatch(this.db);
@@ -207,6 +247,37 @@ export class FirestoreRepository implements CommandCenterRepository {
     for (const item of seed.boardTasks) batch.set(doc(this.db, 'boardTasks', item.id), stripUndefined({ ...item }));
     for (const event of seed.activity) batch.set(doc(this.db, 'activity', event.id), stripUndefined({ ...event }));
     batch.set(settingsRef, stripUndefined({ ...seed.settings, seededAt: seed.settings.seededAt ?? new Date().toISOString() }));
+    await batch.commit();
+  }
+
+  async migrateIfNeeded(): Promise<void> {
+    const settingsRef = doc(this.db, 'settings', 'app');
+    const existing = await getDoc(settingsRef);
+    const data = existing.data() ?? {};
+    const contactsSnap = await getDocs(collection(this.db, 'contacts'));
+    const contacts = contactsSnap.docs.map((item) => decodeContact(item.id, item.data()));
+    const stale = contacts.filter((item) => (item.schemaVersion ?? 1) < SCHEMA_VERSION);
+    if ((data.schemaVersion ?? 0) >= SCHEMA_VERSION && stale.length === 0) return;
+
+    const batch = writeBatch(this.db);
+    for (const contact of stale) {
+      batch.set(
+        doc(this.db, 'contacts', contact.id),
+        stripUndefined({ ...hydrateContact({ ...contact, schemaVersion: SCHEMA_VERSION }) }),
+      );
+    }
+    batch.set(
+      settingsRef,
+      stripUndefined({
+        schemaVersion: SCHEMA_VERSION,
+        categories: data.categories ?? [...CONTACT_CATEGORIES],
+        archiveReasons: data.archiveReasons ?? [...ARCHIVE_REASONS],
+        verificationCurrentDays: data.verificationCurrentDays ?? 90,
+        verificationStaleDays: data.verificationStaleDays ?? 180,
+        followUpIntervals: data.followUpIntervals ?? DEFAULT_FOLLOW_UP_INTERVALS,
+      }),
+      { merge: true },
+    );
     await batch.commit();
   }
 
@@ -261,55 +332,59 @@ export class FirestoreRepository implements CommandCenterRepository {
     const now = new Date().toISOString();
     const id = draft.id ?? newId('contact');
     const existing = this.cached.contacts.find((item) => item.id === id);
-    const contact: Contact = {
+    const contact = hydrateContact({
       ...draft,
       id,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-    };
+      updatedBy: this.actor(),
+      updatedByUid: this.user.uid,
+      people: draft.people ?? existing?.people,
+      methods: draft.methods ?? existing?.methods,
+      attempts: draft.attempts ?? existing?.attempts,
+      verificationChecks: draft.verificationChecks ?? existing?.verificationChecks,
+      verificationHistory: draft.verificationHistory ?? existing?.verificationHistory,
+      archived: draft.archived ?? existing?.archived ?? false,
+    });
     await setDoc(doc(this.db, 'contacts', id), stripUndefined({ ...contact }));
-    await this.pushFeed('contact_saved', `Saved contact: ${contact.organization}`, 'contact', id);
+    if (existing) {
+      const edits = describeContactEdits(existing, contact, this.actor());
+      if (edits.length === 0) {
+        await this.pushFeed('contact_saved', `Saved contact: ${contact.organization}`, 'contact', id);
+      } else {
+        for (const edit of edits) {
+          await this.pushFeed('contact_edited', edit.summary, 'contact', id, edit.details);
+          await this.pushContactActivity(id, 'edit', edit.summary, edit.details);
+        }
+      }
+    } else {
+      await this.pushFeed('contact_saved', `Saved contact: ${contact.organization}`, 'contact', id);
+    }
     return id;
   }
 
   async addContactNote(contactId: string, body: string): Promise<void> {
     const now = new Date().toISOString();
-    const noteId = newId('note');
     const contact = this.cached.contacts.find((item) => item.id === contactId);
     const batch = writeBatch(this.db);
-    batch.set(
-      doc(this.db, 'contactActivity', noteId),
-      stripUndefined({
-        id: noteId,
-        contactId,
-        type: 'note',
-        body,
-        outcome: null,
-        createdAt: now,
-        createdBy: this.actor(),
-      }),
-    );
-    batch.update(doc(this.db, 'contacts', contactId), { updatedAt: now });
+    const noteId = newId('note');
+    batch.set(doc(this.db, 'contactActivity', noteId), stripUndefined(this.makeContactActivity(noteId, contactId, 'note', body)));
+    batch.update(doc(this.db, 'contacts', contactId), { updatedAt: now, updatedBy: this.actor(), updatedByUid: this.user.uid });
     await batch.commit();
     await this.pushFeed('note', `Note on ${contact?.organization ?? 'contact'}: ${body}`, 'contact', contactId);
   }
 
+  async addStandaloneNote(body: string): Promise<void> {
+    await this.pushFeed('note', body, 'system', null);
+  }
+
   async recordCallOutcome(input: CallOutcomeWrite): Promise<void> {
-    const result = applyCallOutcome(this.cached, { ...input, actorName: this.actor() });
-    const now = new Date().toISOString();
+    const result = applyCallOutcome(this.cached, { ...input, actorName: this.actor(), actorUid: this.user.uid });
     const batch = writeBatch(this.db);
     batch.set(doc(this.db, 'contacts', result.contact.id), stripUndefined({ ...result.contact }));
     batch.set(
       doc(this.db, 'contactActivity', result.activityId),
-      stripUndefined({
-        id: result.activityId,
-        contactId: result.contact.id,
-        type: 'outcome',
-        body: result.summary,
-        outcome: input.outcome,
-        createdAt: now,
-        createdBy: this.actor(),
-      }),
+      stripUndefined(this.makeContactActivity(result.activityId, result.contact.id, 'outcome', result.summary, null, input.outcome)),
     );
     if (result.followUp) {
       batch.set(doc(this.db, 'followUps', result.followUp.id), stripUndefined({ ...result.followUp }));
@@ -318,7 +393,13 @@ export class FirestoreRepository implements CommandCenterRepository {
     await this.pushFeed('call_outcome', result.summary, 'contact', result.contact.id);
   }
 
-  async scheduleFollowUp(contactId: string, dueDate: string, notes?: string): Promise<void> {
+  async scheduleFollowUp(
+    contactId: string,
+    dueDate: string,
+    notes?: string,
+    kind: FollowUpKind = 'once',
+    dueTime: string | null = null,
+  ): Promise<void> {
     const now = new Date().toISOString();
     const contact = this.cached.contacts.find((item) => item.id === contactId);
     if (!contact) throw new Error('Contact not found.');
@@ -332,6 +413,8 @@ export class FirestoreRepository implements CommandCenterRepository {
         taskId: null,
         title: `Follow up: ${contact.organization}`,
         dueDate,
+        dueTime,
+        kind,
         status: 'open',
         notes: notes ?? null,
         createdAt: now,
@@ -339,9 +422,11 @@ export class FirestoreRepository implements CommandCenterRepository {
       }),
     );
     batch.update(doc(this.db, 'contacts', contactId), {
-      status: 'Follow Up',
+      status: contact.archived ? contact.status : 'Follow Up',
       nextFollowUpAt: dueDate,
       updatedAt: now,
+      updatedBy: this.actor(),
+      updatedByUid: this.user.uid,
     });
     await batch.commit();
     await this.pushFeed(
@@ -350,12 +435,29 @@ export class FirestoreRepository implements CommandCenterRepository {
       'contact',
       contactId,
     );
+    await this.pushContactActivity(contactId, 'follow_up', `Follow-up scheduled for ${dueDate}${notes ? `. ${notes}` : ''}`);
   }
 
   async completeFollowUp(id: string): Promise<void> {
     const now = new Date().toISOString();
-    await updateDoc(doc(this.db, 'followUps', id), { status: 'done', completedAt: now });
     const followUp = this.cached.followUps.find((item) => item.id === id);
+    await updateDoc(doc(this.db, 'followUps', id), { status: 'done', completedAt: now });
+    const recurrence = followUp ? nextRecurrence(followUp, followUp.dueDate) : null;
+    if (recurrence && followUp) {
+      const nextId = newId('fu');
+      await setDoc(
+        doc(this.db, 'followUps', nextId),
+        stripUndefined({
+          ...followUp,
+          id: nextId,
+          dueDate: recurrence.dueDate,
+          kind: recurrence.kind,
+          status: 'open',
+          createdAt: now,
+          completedAt: null,
+        }),
+      );
+    }
     await this.pushFeed('follow_up_done', `Follow-up completed: ${followUp?.title ?? id}`, 'contact', followUp?.contactId ?? null);
   }
 
@@ -396,8 +498,249 @@ export class FirestoreRepository implements CommandCenterRepository {
     );
   }
 
+  async archiveContact(id: string, reason: ArchiveReason, notes?: string): Promise<void> {
+    const existing = this.requireContact(id);
+    const now = new Date().toISOString();
+    const contact = archiveContactRecord(existing, reason, notes ?? null, this.actor(), now);
+    await setDoc(doc(this.db, 'contacts', id), stripUndefined({ ...contact }));
+    await this.pushFeed('resource_archived', describeArchive(contact.organization, this.actor(), reason), 'contact', id);
+    await this.pushContactActivity(id, 'archive', describeArchive(contact.organization, this.actor(), reason));
+  }
+
+  async restoreContact(id: string): Promise<void> {
+    const now = new Date().toISOString();
+    const contact = restoreContactRecord(this.requireContact(id), now, this.actor());
+    await setDoc(doc(this.db, 'contacts', id), stripUndefined({ ...contact }));
+    await this.pushFeed('resource_restored', describeRestore(contact.organization, this.actor()), 'contact', id);
+    await this.pushContactActivity(id, 'restore', describeRestore(contact.organization, this.actor()));
+  }
+
+  async deleteContact(id: string): Promise<void> {
+    const existing = this.requireContact(id);
+    const batch = writeBatch(this.db);
+    batch.delete(doc(this.db, 'contacts', id));
+    for (const follow of this.cached.followUps.filter((item) => item.contactId === id)) {
+      batch.delete(doc(this.db, 'followUps', follow.id));
+    }
+    await batch.commit();
+    await this.pushFeed('contact_deleted', `${this.actor()} permanently deleted ${existing.organization}.`, 'contact', id);
+  }
+
+  async addPerson(contactId: string, person: PersonDraft): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const contact = addPersonToContact(existing, person);
+    contact.updatedAt = new Date().toISOString();
+    contact.updatedBy = this.actor();
+    contact.updatedByUid = this.user.uid;
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+    await this.pushFeed('contact_added', `${this.actor()} added contact ${person.name} at ${existing.organization}.`, 'contact', contactId);
+    await this.pushContactActivity(contactId, 'person', `Added person ${person.name}`);
+  }
+
+  async updatePerson(contactId: string, personId: string, patch: Partial<PersonDraft>): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const people = existing.people.map((item) =>
+      item.id === personId
+        ? {
+            ...item,
+            name: patch.name ?? item.name,
+            title: patch.title === undefined ? item.title : patch.title,
+            department: patch.department === undefined ? item.department : patch.department,
+            phone: patch.phone === undefined ? item.phone : patch.phone,
+            email: patch.email === undefined ? item.email : patch.email,
+            notes: patch.notes === undefined ? item.notes : patch.notes,
+            preferredContactMethod:
+              patch.preferredContactMethod === undefined ? item.preferredContactMethod : patch.preferredContactMethod,
+            isPrimary: patch.isPrimary ?? item.isPrimary,
+          }
+        : item,
+    );
+    const contact = hydrateContact({ ...existing, people, updatedAt: new Date().toISOString(), updatedBy: this.actor(), updatedByUid: this.user.uid });
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+    await this.pushFeed('contact_edited', `${this.actor()} updated a person at ${existing.organization}.`, 'contact', contactId);
+  }
+
+  async addMethod(contactId: string, method: MethodDraft): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const contact = addMethodToContact(existing, method);
+    contact.updatedAt = new Date().toISOString();
+    contact.updatedBy = this.actor();
+    contact.updatedByUid = this.user.uid;
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+    await this.pushFeed(
+      method.kind === 'phone' ? 'phone_corrected' : 'email_corrected',
+      `${this.actor()} added a ${method.role ?? method.kind} ${method.kind} for ${existing.organization}: ${method.value}.`,
+      'contact',
+      contactId,
+      { field: method.kind, newValue: method.value },
+    );
+  }
+
+  async updateMethod(contactId: string, methodId: string, patch: Partial<Contact['methods'][number]>): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const methods = existing.methods.map((item) => (item.id === methodId ? { ...item, ...patch } : item));
+    const contact = hydrateContact({ ...existing, methods, updatedAt: new Date().toISOString(), updatedBy: this.actor(), updatedByUid: this.user.uid });
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+  }
+
+  async markMethodInvalid(contactId: string, methodId: string): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const method = existing.methods.find((item) => item.id === methodId);
+    const contact = markMethodInvalid(existing, methodId);
+    contact.updatedAt = new Date().toISOString();
+    contact.updatedBy = this.actor();
+    contact.updatedByUid = this.user.uid;
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+    await this.pushFeed(
+      'phone_corrected',
+      `${this.actor()} marked ${existing.organization}'s number invalid. Old: ${method?.value ?? methodId}.`,
+      'contact',
+      contactId,
+      { field: 'phone', oldValue: method?.value ?? null, newValue: '(invalid)' },
+    );
+  }
+
+  async setPrimaryPerson(contactId: string, personId: string): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const contact = withPrimaryPerson({ ...existing, updatedAt: new Date().toISOString(), updatedBy: this.actor(), updatedByUid: this.user.uid }, personId);
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+  }
+
+  async setPrimaryPhone(contactId: string, methodId: string): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const contact = withPrimaryPhone({ ...existing, updatedAt: new Date().toISOString(), updatedBy: this.actor(), updatedByUid: this.user.uid }, methodId);
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+  }
+
+  async saveVerificationChecks(contactId: string, checks: VerificationChecks): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const contact = hydrateContact({
+      ...existing,
+      verificationChecks: checks,
+      updatedAt: new Date().toISOString(),
+      updatedBy: this.actor(),
+      updatedByUid: this.user.uid,
+    });
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+  }
+
+  async markVerified(contactId: string, checks: VerificationChecks): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const now = new Date().toISOString();
+    const contact = applyVerification(existing, checks, this.actor(), this.user.uid, now, 'Verified');
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+    await this.pushFeed('resource_verified', describeVerify(contact.organization, this.actor()), 'contact', contactId);
+    await this.pushContactActivity(contactId, 'verify', describeVerify(contact.organization, this.actor()));
+  }
+
+  async setVerificationStatus(contactId: string, status: VerificationStatus): Promise<void> {
+    const existing = this.requireContact(contactId);
+    const contact = hydrateContact({
+      ...existing,
+      verificationStatus: status,
+      updatedAt: new Date().toISOString(),
+      updatedBy: this.actor(),
+      updatedByUid: this.user.uid,
+    });
+    await setDoc(doc(this.db, 'contacts', contactId), stripUndefined({ ...contact }));
+  }
+
+  async mergeContacts(keepId: string, dropId: string, choices: FieldChoices): Promise<void> {
+    const keep = this.requireContact(keepId);
+    const drop = this.requireContact(dropId);
+    const now = new Date().toISOString();
+    const result = mergeContacts(keep, drop, choices, this.actor(), now, this.cached.followUps, this.cached.contactActivity);
+    const batch = writeBatch(this.db);
+    batch.set(doc(this.db, 'contacts', keepId), stripUndefined({ ...result.kept }));
+    batch.set(doc(this.db, 'contacts', dropId), stripUndefined({ ...result.dropped }));
+    for (const follow of result.followUps) {
+      if (follow.contactId === keepId) batch.set(doc(this.db, 'followUps', follow.id), stripUndefined({ ...follow }));
+    }
+    for (const activity of result.activity.slice(0, 40)) {
+      batch.set(doc(this.db, 'contactActivity', activity.id), stripUndefined({ ...activity }));
+    }
+    await batch.commit();
+    await this.pushFeed(
+      'duplicate_merged',
+      `${this.actor()} merged ${drop.organization} into ${keep.organization}.`,
+      'contact',
+      keepId,
+      { field: 'merge', oldValue: dropId, newValue: keepId },
+    );
+  }
+
+  async bulkUpdate(ids: string[], action: BulkAction): Promise<void> {
+    for (const id of ids) {
+      if (action.type === 'archive') await this.archiveContact(id, action.reason, action.notes);
+      else if (action.type === 'status') await this.upsertContact({ ...this.requireContact(id), status: action.status });
+      else if (action.type === 'verify-queue') await this.setVerificationStatus(id, action.verificationStatus ?? 'Ready to Call');
+      else if (action.type === 'category') await this.upsertContact({ ...this.requireContact(id), category: action.category });
+      else if (action.type === 'follow-up') await this.scheduleFollowUp(id, action.dueDate, action.notes, action.kind);
+    }
+  }
+
+  async importContacts(rows: ImportPreviewRow[], commitDuplicates = false): Promise<{ imported: number; skipped: number }> {
+    let imported = 0;
+    let skipped = 0;
+    for (const row of rows) {
+      if (row.kind === 'error') {
+        skipped += 1;
+        continue;
+      }
+      if (row.kind === 'duplicate' && !commitDuplicates) {
+        skipped += 1;
+        continue;
+      }
+      if (row.kind === 'update') {
+        await this.upsertContact({ ...row.contact, id: row.existingId });
+        imported += 1;
+        continue;
+      }
+      await this.upsertContact(createBlankContact(row.contact));
+      imported += 1;
+    }
+    return { imported, skipped };
+  }
+
+  private requireContact(id: string): Contact {
+    const contact = this.cached.contacts.find((item) => item.id === id);
+    if (!contact) throw new Error('Contact not found.');
+    return contact;
+  }
+
   private actor(): string {
     return this.user.displayName || this.user.email || 'Rick';
+  }
+
+  private makeContactActivity(
+    id: string,
+    contactId: string,
+    type: ContactActivityType,
+    body: string,
+    details: ActivityDetails | null = null,
+    outcome: ContactActivity['outcome'] = null,
+  ): ContactActivity {
+    return {
+      id,
+      contactId,
+      type,
+      body,
+      outcome,
+      createdAt: new Date().toISOString(),
+      createdBy: this.actor(),
+      createdByUid: this.user.uid,
+      details,
+    };
+  }
+
+  private async pushContactActivity(
+    contactId: string,
+    type: ContactActivityType,
+    body: string,
+    details: ActivityDetails | null = null,
+  ): Promise<void> {
+    const id = newId('note');
+    await setDoc(doc(this.db, 'contactActivity', id), stripUndefined(this.makeContactActivity(id, contactId, type, body, details)));
   }
 
   private async pushFeed(
@@ -405,6 +748,7 @@ export class FirestoreRepository implements CommandCenterRepository {
     summary: string,
     entityType: ActivityEvent['entityType'],
     entityId: string | null,
+    details: ActivityDetails | null = null,
   ): Promise<void> {
     const id = newId('feed');
     await setDoc(
@@ -417,6 +761,8 @@ export class FirestoreRepository implements CommandCenterRepository {
         entityId,
         createdAt: new Date().toISOString(),
         createdBy: this.actor(),
+        createdByUid: this.user.uid,
+        details,
       }),
     );
   }
@@ -444,20 +790,29 @@ function decodeTask(id: string, data: DocumentData): Task {
 }
 
 function decodeContact(id: string, data: DocumentData): Contact {
-  return {
+  return hydrateContact({
     id,
     organization: String(data.organization ?? ''),
     facility: asString(data.facility),
     contactName: asString(data.contactName),
+    jobTitle: asString(data.jobTitle),
+    department: asString(data.department),
     phone: asString(data.phone),
+    alternatePhone: asString(data.alternatePhone),
+    directPhone: asString(data.directPhone),
+    extension: asString(data.extension),
     email: asString(data.email),
+    alternateEmail: asString(data.alternateEmail),
     website: asString(data.website),
     address: asString(data.address),
     city: asString(data.city),
-    category: (data.category ?? 'Other') as ContactCategory,
+    state: asString(data.state),
+    zip: asString(data.zip),
+    category: String(data.category ?? 'Other'),
     organizationType: asString(data.organizationType),
     inventory: asString(data.inventory),
     approach: asString(data.approach),
+    contactPathway: asString(data.contactPathway),
     executives: asString(data.executives),
     channel: asString(data.channel),
     corridor: asString(data.corridor),
@@ -467,13 +822,34 @@ function decodeContact(id: string, data: DocumentData): Contact {
     lastContactAt: data.lastContactAt ? asIso(data.lastContactAt) : null,
     nextFollowUpAt: asString(data.nextFollowUpAt),
     notes: asString(data.notes),
-    verificationStatus: (data.verificationStatus ?? 'unverified') as VerificationStatus,
+    verificationStatus: data.verificationStatus,
+    verificationChecks: data.verificationChecks ?? EMPTY_VERIFICATION_CHECKS,
+    verificationHistory: Array.isArray(data.verificationHistory) ? (data.verificationHistory as VerificationHistoryEntry[]) : [],
     source: String(data.source ?? 'manual'),
     lastVerified: data.lastVerified ? asIso(data.lastVerified) : null,
+    verifiedAt: data.verifiedAt ? asIso(data.verifiedAt) : null,
+    verifiedBy: asString(data.verifiedBy),
+    verifiedByUid: asString(data.verifiedByUid),
     sortOrder: asNumber(data.sortOrder) ?? 0,
     createdAt: asIso(data.createdAt),
     updatedAt: asIso(data.updatedAt),
-  };
+    updatedBy: asString(data.updatedBy),
+    updatedByUid: asString(data.updatedByUid),
+    people: Array.isArray(data.people) ? (data.people as OrgPerson[]) : [],
+    methods: Array.isArray(data.methods) ? (data.methods as ContactMethod[]) : [],
+    archived: asBool(data.archived),
+    archiveReason: data.archiveReason ?? null,
+    archiveNotes: asString(data.archiveNotes),
+    archivedAt: data.archivedAt ? asIso(data.archivedAt) : null,
+    archivedBy: asString(data.archivedBy),
+    previousStatus: data.previousStatus ?? null,
+    previousVerificationStatus: data.previousVerificationStatus ?? null,
+    mergedInto: asString(data.mergedInto),
+    mergedFrom: Array.isArray(data.mergedFrom) ? data.mergedFrom.map(String) : [],
+    duplicateSuspected: asBool(data.duplicateSuspected),
+    attempts: { ...EMPTY_ATTEMPTS, ...(data.attempts ?? {}) },
+    schemaVersion: asNumber(data.schemaVersion) ?? 1,
+  });
 }
 
 function decodeActivity(id: string, data: DocumentData): ContactActivity {
@@ -485,6 +861,8 @@ function decodeActivity(id: string, data: DocumentData): ContactActivity {
     outcome: data.outcome ?? null,
     createdAt: asIso(data.createdAt),
     createdBy: String(data.createdBy ?? ''),
+    createdByUid: asString(data.createdByUid),
+    details: data.details ?? null,
   };
 }
 
@@ -495,6 +873,8 @@ function decodeFollowUp(id: string, data: DocumentData): FollowUp {
     taskId: asString(data.taskId),
     title: String(data.title ?? ''),
     dueDate: String(data.dueDate ?? ''),
+    dueTime: asString(data.dueTime),
+    kind: (data.kind ?? 'once') as FollowUpKind,
     status: data.status === 'done' ? 'done' : 'open',
     notes: asString(data.notes),
     createdAt: asIso(data.createdAt),
@@ -521,6 +901,8 @@ function decodeFeed(id: string, data: DocumentData): ActivityEvent {
     entityId: asString(data.entityId),
     createdAt: asIso(data.createdAt),
     createdBy: String(data.createdBy ?? ''),
+    createdByUid: asString(data.createdByUid),
+    details: data.details ?? null,
   };
 }
 
@@ -529,6 +911,7 @@ function decodeSettings(data: DocumentData | undefined): AppSettings {
   if (!data) return fallback;
   return {
     seededAt: data.seededAt ? asIso(data.seededAt) : null,
+    schemaVersion: asNumber(data.schemaVersion) ?? 1,
     resourceProgress: {
       remaining: asNumber(data.resourceProgress?.remaining) ?? 0,
       contacted: asNumber(data.resourceProgress?.contacted) ?? 0,
@@ -536,7 +919,18 @@ function decodeSettings(data: DocumentData | undefined): AppSettings {
       needsFollowUp: asNumber(data.resourceProgress?.needsFollowUp) ?? 0,
       unableToReach: asNumber(data.resourceProgress?.unableToReach) ?? 0,
     },
-    resourceVerifierUrl: asString(data.resourceVerifierUrl) ?? fallback.resourceVerifierUrl,
-    navigatorUrl: asString(data.navigatorUrl) ?? fallback.navigatorUrl,
+    resourceVerifierUrl: asString(data.resourceVerifierUrl) ?? DEFAULT_RESOURCE_VERIFIER_URL,
+    navigatorUrl: asString(data.navigatorUrl) ?? DEFAULT_NAVIGATOR_URL,
+    categories: Array.isArray(data.categories) && data.categories.length > 0 ? data.categories.map(String) : [...CONTACT_CATEGORIES],
+    archiveReasons: Array.isArray(data.archiveReasons) && data.archiveReasons.length > 0 ? data.archiveReasons.map(String) : [...ARCHIVE_REASONS],
+    verificationCurrentDays: asNumber(data.verificationCurrentDays) ?? 90,
+    verificationStaleDays: asNumber(data.verificationStaleDays) ?? 180,
+    followUpIntervals: {
+      tomorrow: asNumber(data.followUpIntervals?.tomorrow) ?? DEFAULT_FOLLOW_UP_INTERVALS.tomorrow,
+      threeDays: asNumber(data.followUpIntervals?.threeDays) ?? DEFAULT_FOLLOW_UP_INTERVALS.threeDays,
+      week: asNumber(data.followUpIntervals?.week) ?? DEFAULT_FOLLOW_UP_INTERVALS.week,
+      twoWeeks: asNumber(data.followUpIntervals?.twoWeeks) ?? DEFAULT_FOLLOW_UP_INTERVALS.twoWeeks,
+      thirty: asNumber(data.followUpIntervals?.thirty) ?? DEFAULT_FOLLOW_UP_INTERVALS.thirty,
+    },
   };
 }

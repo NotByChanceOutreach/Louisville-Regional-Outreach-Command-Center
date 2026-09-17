@@ -18,7 +18,7 @@ describe('imported directory', () => {
   it('marks imported records as unverified with a source', () => {
     const contacts = underwearSeedContacts('2026-09-15T12:00:00.000Z');
     for (const contact of contacts) {
-      expect(contact.verificationStatus).toBe('unverified');
+      expect(contact.verificationStatus).toBe('Unverified');
       expect(contact.source.toLowerCase()).toContain('not independently verified');
       expect(contact.lastVerified).toBeNull();
     }

@@ -1,3 +1,4 @@
+import { hydrateContact } from '../lib/contactModel.ts';
 import type { BoardTask, Contact } from '../types/models.ts';
 
 const BOARD_SOURCE = 'Entered from Not By Chance Outreach leadership list supplied by Rick. Contact details not provided.';
@@ -19,36 +20,40 @@ const members: BoardMember[] = [
 ];
 
 export function boardMemberContacts(nowIso: string): Contact[] {
-  return members.map((member) => ({
-    id: member.id,
-    organization: 'Not By Chance Outreach',
-    facility: member.facility,
-    contactName: member.contactName,
-    phone: null,
-    email: null,
-    website: null,
-    address: null,
-    city: 'Louisville',
-    category: 'Board',
-    organizationType: 'Board / Leadership',
-    inventory: null,
-    approach: null,
-    executives: null,
-    channel: null,
-    corridor: 'Louisville Metro Core',
-    radialDistance: null,
-    distTag: null,
-    status: 'Not Contacted',
-    lastContactAt: null,
-    nextFollowUpAt: null,
-    notes: null,
-    verificationStatus: 'needs_research',
-    source: BOARD_SOURCE,
-    lastVerified: null,
-    sortOrder: member.sortOrder,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  }));
+  return members.map((member) =>
+    hydrateContact({
+      id: member.id,
+      organization: 'Not By Chance Outreach',
+      facility: member.facility,
+      contactName: member.contactName,
+      phone: null,
+      email: null,
+      website: null,
+      address: null,
+      city: 'Louisville',
+      state: 'KY',
+      zip: null,
+      category: 'Board',
+      organizationType: 'Board / Leadership',
+      inventory: null,
+      approach: null,
+      executives: null,
+      channel: null,
+      corridor: 'Louisville Metro Core',
+      radialDistance: null,
+      distTag: null,
+      status: 'Not Contacted',
+      lastContactAt: null,
+      nextFollowUpAt: null,
+      notes: null,
+      verificationStatus: 'Research Needed',
+      source: BOARD_SOURCE,
+      lastVerified: null,
+      sortOrder: member.sortOrder,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    }),
+  );
 }
 
 const checklist = [

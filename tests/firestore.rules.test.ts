@@ -68,6 +68,16 @@ describe('allowlisted admin', () => {
     await assertSucceeds(setDoc(doc(adminDb, 'contacts', 'c2'), { organization: 'New', status: 'Not Contacted' }));
   });
 
+  it('can archive-style update and delete contacts', async () => {
+    const adminDb = db(ADMIN, EMAIL);
+    await assertSucceeds(setDoc(doc(adminDb, 'contacts', 'c1'), { organization: 'Test', archived: true, archiveReason: 'Closed' }));
+    await assertSucceeds(deleteDoc(doc(adminDb, 'contacts', 'c1')));
+  });
+
+  it('denies a non-admin from deleting contacts', async () => {
+    await assertFails(deleteDoc(doc(db(STRANGER, 'random@gmail.com'), 'contacts', 'c1')));
+  });
+
   it('cannot delete through a random collection', async () => {
     await assertFails(deleteDoc(doc(db(ADMIN, EMAIL), 'secrets', 'x')));
   });

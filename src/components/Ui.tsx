@@ -39,6 +39,22 @@ export function SecondaryButton({
   );
 }
 
+export function DangerButton({
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-xl bg-red-700 px-4 text-base font-semibold text-white hover:bg-red-600 disabled:opacity-50 ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function CallAnchor({
   href,
   children,

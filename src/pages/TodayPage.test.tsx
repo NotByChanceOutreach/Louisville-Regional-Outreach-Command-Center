@@ -22,10 +22,10 @@ describe('TodayPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/What do I need to do next/i)).toBeInTheDocument();
+      expect(screen.getByText(/What should I do next/i)).toBeInTheDocument();
     });
     expect(screen.getAllByText(/Website 2.0/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Resource verification/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Navigator/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Underwear outreach/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Board meeting/i).length).toBeGreaterThan(0);
     const verifier = screen.getAllByRole('link', { name: /resource verifier/i })[0];

@@ -26,7 +26,7 @@ export function isInCallQueue(status: ContactStatus): boolean {
 
 export function callQueue(contacts: readonly Contact[], now: Date = new Date()): Contact[] {
   return contacts
-    .filter((contact) => isInCallQueue(contact.status))
+    .filter((contact) => !contact.archived && !contact.mergedInto && isInCallQueue(contact.status))
     .slice()
     .sort((a, b) => {
       const rank = queueRank(a, now) - queueRank(b, now);

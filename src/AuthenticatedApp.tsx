@@ -8,6 +8,9 @@ import { CallSessionPage } from './pages/CallSessionPage.tsx';
 import { CallsPage } from './pages/CallsPage.tsx';
 import { ContactDetailPage } from './pages/ContactDetailPage.tsx';
 import { ContactsPage } from './pages/ContactsPage.tsx';
+import { DataQualityPage } from './pages/DataQualityPage.tsx';
+import { ImportExportPage } from './pages/ImportExportPage.tsx';
+import { MergePage } from './pages/MergePage.tsx';
 import { NoAccessPage } from './pages/LoginPage.tsx';
 import { MorePage } from './pages/MorePage.tsx';
 import { ResourcesPage } from './pages/ResourcesPage.tsx';
@@ -54,11 +57,15 @@ function Gate() {
           <Route path="/calls/next" element={<CallSessionPage />} />
           <Route path="/calls/:contactId" element={<CallSessionPage />} />
           <Route path="/contacts" element={<ContactsPage />} />
+          <Route path="/contacts/merge" element={<MergePage />} />
           <Route path="/contacts/:contactId" element={<ContactDetailPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/resources" element={<ResourcesPage />} />
           <Route path="/underwear" element={<UnderwearPage />} />
           <Route path="/board" element={<BoardPage />} />
+          <Route path="/quality" element={<DataQualityPage />} />
+          <Route path="/quality/:bucket" element={<DataQualityPage />} />
+          <Route path="/import" element={<ImportExportPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/more" element={<MorePage />} />

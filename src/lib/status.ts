@@ -18,7 +18,13 @@ export function contactTone(status: ContactStatus, overdue = false): Tone {
     case 'Interested':
     case 'Partnership':
     case 'Completed':
+    case 'Donation Possible':
+    case 'Donation Confirmed':
       return 'emerald';
+    case 'Wrong Number':
+    case 'Unable to Reach':
+    case 'Archived':
+      return 'red';
     case 'Declined':
     case 'Not Contacted':
     default:

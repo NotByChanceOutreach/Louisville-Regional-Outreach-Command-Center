@@ -1,9 +1,33 @@
+import { hydrateContact } from '../lib/contactModel.ts';
 import type { Contact } from '../types/models.ts';
 
 const SOURCE =
   'Imported from Louisville undergarment directory HTML. Not independently verified.';
 
-type Seed = Omit<Contact, 'createdAt' | 'updatedAt' | 'lastContactAt' | 'nextFollowUpAt' | 'lastVerified' | 'notes'>;
+type Seed = {
+  id: string;
+  organization: string;
+  facility: string | null;
+  contactName: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  address: string | null;
+  city: string | null;
+  category: 'Underwear/Apparel';
+  organizationType: string | null;
+  inventory: string | null;
+  approach: string | null;
+  executives: string | null;
+  channel: string | null;
+  corridor: string | null;
+  radialDistance: number | null;
+  distTag: string | null;
+  status: 'Not Contacted';
+  verificationStatus: 'unverified';
+  source: string;
+  sortOrder: number;
+};
 
 const underwear: Seed[] = [
   {
@@ -512,15 +536,17 @@ const underwear: Seed[] = [
 export const UNDERWEAR_SOURCE = SOURCE;
 
 export function underwearSeedContacts(nowIso: string): Contact[] {
-  return underwear.map((item) => ({
-    ...item,
-    notes: null,
-    lastContactAt: null,
-    nextFollowUpAt: null,
-    lastVerified: null,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  }));
+  return underwear.map((item) =>
+    hydrateContact({
+      ...item,
+      notes: null,
+      lastContactAt: null,
+      nextFollowUpAt: null,
+      lastVerified: null,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    }),
+  );
 }
 
 export const UNDERWEAR_SEED_COUNT = underwear.length;
