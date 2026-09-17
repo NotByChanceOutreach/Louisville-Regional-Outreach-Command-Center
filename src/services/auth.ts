@@ -1,4 +1,5 @@
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { getRedirectResult, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth';
+import { firebaseAuthErrorMessage, preferRedirectSignIn, shouldFallbackToRedirect } from '../lib/authErrors.ts';
 import { getFirebaseAuth, googleProvider, isFirebaseConfigured } from './firebase.ts';
 import type { AuthUser } from '../types/models.ts';
 
@@ -37,9 +38,32 @@ export function subscribeAuth(listener: (state: AuthState) => void): () => void 
   );
 }
 
+export async function completeRedirectSignIn(): Promise<string | null> {
+  if (!isFirebaseConfigured()) return null;
+  try {
+    await getRedirectResult(getFirebaseAuth());
+    return null;
+  } catch (err) {
+    return firebaseAuthErrorMessage(err);
+  }
+}
+
 export async function signInWithGoogle(): Promise<void> {
   const auth = getFirebaseAuth();
-  await signInWithPopup(auth, googleProvider());
+  const provider = googleProvider();
+  if (preferRedirectSignIn()) {
+    await signInWithRedirect(auth, provider);
+    return;
+  }
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (err) {
+    if (shouldFallbackToRedirect(err)) {
+      await signInWithRedirect(auth, provider);
+      return;
+    }
+    throw new Error(firebaseAuthErrorMessage(err));
+  }
 }
 
 export async function signOutUser(): Promise<void> {

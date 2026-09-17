@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { firebaseAuthErrorMessage } from '../lib/authErrors.ts';
 import { PrimaryButton } from '../components/Ui.tsx';
 
 export function LoginPage({
@@ -18,7 +19,7 @@ export function LoginPage({
       const { signInWithGoogle } = await import('../services/auth.ts');
       await signInWithGoogle();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Google sign-in failed.');
+      setError(firebaseAuthErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -49,6 +50,9 @@ export function LoginPage({
             {busy ? 'Opening Google…' : 'Sign in with Google'}
           </PrimaryButton>
         )}
+        <p className="mt-3 text-xs leading-relaxed text-slate-400">
+          Use nbc@notbychanceoutreach.com. On a phone, stay in the Google window until the account is selected.
+        </p>
         {error && mode !== 'config_missing' ? (
           <p className="mt-4 text-sm text-red-300" role="alert">
             {error}

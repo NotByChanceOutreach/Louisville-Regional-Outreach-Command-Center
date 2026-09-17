@@ -17,7 +17,8 @@
         "source": "**",
         "headers": [
           { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
-          { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
+          { "key": "Cache-Control", "value": "no-cache, must-revalidate" },
+          { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" }
         ]
       },
       {

@@ -17,7 +17,7 @@ export default function App() {
     return <LoginPage mode="error" message={auth.message} />;
   }
   if (auth.status === 'signed_out') {
-    return <LoginPage />;
+    return <LoginPage message={auth.hint} />;
   }
 
   return (
